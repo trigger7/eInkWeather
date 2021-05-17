@@ -10,15 +10,46 @@
 
 #define SUBDIVISION 4
 
-Graph::Graph(Adafruit_GFX *gfx, const char *parameter_a, const char *unit_a, const char *parameter_b, const char *unit_b, graph_type type_a, graph_type type_b)
+Graph::Graph(Adafruit_GFX *gfx, const char *title, const char *parameter_a, const char *unit_a, const char *parameter_b, const char *unit_b, graph_type type_a, graph_type type_b)
 {
   this->_gfx = gfx;
+  this->_title = title;
   this->_parameter_a = parameter_a;
   this->_type_a = type_a;
   this->_unit_a = unit_a;
   this->_parameter_b = parameter_b;
   this->_type_b = type_b;
   this->_unit_b = unit_b;
+  this->_linked = this->_unit_a == this->_unit_b;
+}
+
+Graph::Graph(Adafruit_GFX *gfx, const char *title)
+{
+  this->_gfx = gfx;
+  this->_title = title;
+  this->_parameter_a = "";
+  this->_type_a = line;
+  this->_unit_a = "";
+  this->_parameter_b = "";
+  this->_type_b = line;
+  this->_unit_b = "";
+}
+
+
+void Graph::set_parameter_a(const char *parameter_a, const char *unit_a, graph_type type_a)
+{
+  this->_parameter_a = parameter_a;
+  this->_type_a = type_a;
+  this->_unit_a = unit_a;
+  this->_linked = this->_unit_a == this->_unit_b;
+}
+
+void Graph::set_parameter_b(const char *parameter_b, const char *unit_b, graph_type type_b)
+{
+  this->_parameter_b = parameter_b;
+  this->_type_b = type_b;
+  this->_unit_b = unit_b;
+  this->_linked = this->_unit_a == this->_unit_b;
 }
 
 void Graph::draw(void)
@@ -29,8 +60,14 @@ void Graph::draw(void)
 
   this->draw_axes();
 
-  this->draw_line_graph(&this->_map_a, this->_color_a);
-  this->draw_bar_graph(&this->_map_b, this->_color_b);
+  if ( this->_type_a == line )
+    this->draw_line_graph(&this->_map_a, this->_color_a);
+  else
+    this->draw_bar_graph(&this->_map_a, this->_color_a);
+  if ( this->_type_b == line )
+    this->draw_line_graph(&this->_map_b, this->_color_b);
+  else
+    this->draw_bar_graph(&this->_map_b, this->_color_b);
   //this->draw_line_graph(&this->_map_b, this->_color_b);
 
   this->draw_labels();
@@ -40,6 +77,11 @@ void Graph::draw_labels(void)
 {
   this->_gfx->setTextColor(GxEPD_BLACK);
   this->_gfx->setFont(&Picopixel);
+
+  int16_t tbx, tby; uint16_t tbw, tbh;
+  this->_gfx->getTextBounds(this->_title, 0, 0, &tbx, &tby, &tbw, &tbh);
+  this->_gfx->setCursor((this->_gfx->width() - tbw) / 2, tbh);
+  this->_gfx->print(this->_title);
 
   if ( ! this->_map_a.empty() )
   {
@@ -158,11 +200,25 @@ int Graph::screen_y(etl::map<unsigned long, float, 25>* _map, float value)
 
 int Graph::find_min_max_value(etl::map<unsigned long, float, 25>* _map, float &min_value, float &max_value)
 {
-  auto minmax = std::minmax_element(_map->begin(), _map->end(),
-                                    [](const std::pair<int, int>& p1, const std::pair<int, int>& p2) {
-                                      return p1.second < p2.second; });
-  int temp_min_value = floor(minmax.first->second);
-  int temp_max_value = ceil(minmax.second->second);
+  int temp_min_value, temp_max_value;
+  if ( !this->_linked ) {
+    auto minmax = std::minmax_element(_map->begin(), _map->end(),
+                                      [](const std::pair<int, int>& p1, const std::pair<int, int>& p2) {
+                                        return p1.second < p2.second; });
+    temp_min_value = floor(minmax.first->second);
+    temp_max_value = ceil(minmax.second->second);
+  } else {
+    auto minmax = std::minmax_element(this->_map_a.begin(), this->_map_a.end(),
+                                      [](const std::pair<int, int>& p1, const std::pair<int, int>& p2) {
+                                        return p1.second < p2.second; });
+    temp_min_value = floor(minmax.first->second);
+    temp_max_value = ceil(minmax.second->second);
+    minmax = std::minmax_element(this->_map_b.begin(), this->_map_b.end(),
+                                 [](const std::pair<int, int>& p1, const std::pair<int, int>& p2) {
+                                   return p1.second < p2.second; });
+    temp_min_value = min(temp_min_value, (int)floor(minmax.first->second));
+    temp_max_value = max(temp_max_value, (int)ceil(minmax.second->second));
+  }
 
   temp_max_value = max(temp_max_value, temp_min_value + SUBDIVISION + 1);
   int range = temp_max_value - temp_min_value;

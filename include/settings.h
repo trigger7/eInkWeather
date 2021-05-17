@@ -8,6 +8,14 @@ WifiNetwork networks[1] = {
     {"my-ssid", "my-wifi-password"}
 };
 
-#define API_KEY "my-openweathermap-api-key"
+struct Location
+{
+    const char* title;
+    const char* name;
+};
 
-#define LOCATION "Paradise,Us"
+Location locations[1] = {
+    {"Paradise", "Paradise,Us"}
+};
+
+#define API_KEY "my-openweathermap-api-key"

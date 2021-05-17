@@ -1,9 +1,12 @@
 #include "settings.h"
+#include "graphs.h"
 
 #include <Arduino.h>
 #include <Wire.h>
 
 #include <TimeLib.h>
+#include <Button2.h>
+#include <EEPROM.h>
 
 #include <gfxfont.h>
 #include <Adafruit_GFX.h>
@@ -20,34 +23,32 @@
 
 #include <WiFi.h>
 #include <WiFiMulti.h>
-
 #include <HTTPClient.h>
-
-#include "graphs.h"
 
 GxEPD2_3C<GxEPD2_270c, GxEPD2_270c::HEIGHT> display(GxEPD2_270c(/*CS=*/ 5, /*DC=*/ 17, /*RST=*/ 16, /*BUSY=*/ 4));
 
 WiFiMulti wifiMulti;
 
+uint8_t location_index = 0;
+Location location = locations[location_index];
+
+uint8_t mode = 0;
+
+Button2 mode_button = Button2(37);
+Button2 location_button = Button2(38);
+Button2 button = Button2(39);
+
 #define T0 273.15
 #define MS_TO_KMH 3.6
 
-tmElements_t current_date;
-const char* current_location;
-float current_temperature;
-float current_feels_like;
-unsigned int current_pressure;
-unsigned int current_humidity;
-float current_wind;
 
-
-String get_http_response(const char* type)
+String get_http_response(String type, String location)
 {
   HTTPClient http;
   String payload;
 
   Serial.println("[HTTP] begin...");
-  String url = "http://api.openweathermap.org/data/2.5/forecast?q=" LOCATION "&appid=" API_KEY;
+  String url = "http://api.openweathermap.org/data/2.5/" + type + "?q=" + location + "&appid=" API_KEY;
   http.begin(url); //HTTP
 
   Serial.println("[HTTP] GET...");
@@ -62,7 +63,7 @@ String get_http_response(const char* type)
     if(httpCode == HTTP_CODE_OK) {
       payload = http.getString();
       //Serial.println(payload);
-      Serial.println("GET done");
+      //Serial.println("GET done");
     }
   } else {
     Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
@@ -73,103 +74,99 @@ String get_http_response(const char* type)
   return payload;
 }
 
-void parse_json(String response, DynamicJsonDocument *doc)
+void parse_json(String& response, DynamicJsonDocument& doc)
 {
   // Parse JSON object
-  DeserializationError error = deserializeJson(*doc, response);
+  DeserializationError error = deserializeJson(doc, response);
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
     Serial.println(error.c_str());
   }
 }
 
-void _print_parameter(const char* parameter, int line)
-{
-  display.setFont(&FreeMono9pt7b);
-  display.setTextColor(GxEPD_BLACK);
-  display.setCursor(0, line);
-  //strcat(parameter, " : ");
-  display.print(parameter);
+void push_data(Graph& graph, DynamicJsonDocument& doc, uint8_t mode) {
+  switch(mode)
+  {
+    case 0:
+      for (int i = 0; i < 25; i++) {
+        graph.push_a(doc["list"][i]["dt"].as<unsigned long>(), doc["list"][i]["main"]["temp"].as<float>() - T0);
+        graph.push_b(doc["list"][i]["dt"].as<unsigned long>(), doc["list"][i]["rain"]["3h"].as<float>());
+      }
+      graph.set_parameter_a("T", "'C", line);
+      graph.set_parameter_b("RR", "mm", bar);
+      break;
+    case 1:
+      for (int i = 0; i < 25; i++) {
+        graph.push_a(doc["list"][i]["dt"].as<unsigned long>(), doc["list"][i]["main"]["humidity"].as<int>());
+        graph.push_b(doc["list"][i]["dt"].as<unsigned long>(), doc["list"][i]["main"]["pressure"].as<int>());
+      }
+      graph.set_parameter_a("HU", "%", line);
+      graph.set_parameter_b("P", "hPa", line);
+      break;
+    case 2:
+      for (int i = 0; i < 25; i++) {
+        graph.push_a(doc["list"][i]["dt"].as<unsigned long>(), doc["list"][i]["wind"]["gust"].as<float>() * MS_TO_KMH);
+        graph.push_b(doc["list"][i]["dt"].as<unsigned long>(), doc["list"][i]["wind"]["speed"].as<float>() * MS_TO_KMH);
+      }
+      graph.set_parameter_a("GU", "km/h", bar);
+      graph.set_parameter_b("FF", "km/h", bar);
+  }
 }
 
-void _print_unit(const char* unit, int line)
-{
-  display.setFont(&FreeMono9pt7b);
-  display.setTextColor(GxEPD_BLACK);
-  display.setCursor(190, line);
-  display.print(unit);
-}
+void draw_graph() {
+  String response = get_http_response("forecast", location.name);
+  DynamicJsonDocument doc(30000);
+  parse_json(response, doc);
 
-void display_parameter_float(const char* parameter, float value, const char* unit, int line)
-{
-  _print_parameter(parameter, line);
+  Graph graph = Graph(&display, location.title);
 
-  display.setFont(&FreeMonoBold9pt7b);
-  display.setTextColor(GxEPD_RED);
-  display.setCursor(140, line);
-  display.printf("%4.1f", value);
+  push_data(graph, doc, mode);
+  Serial.println("push done");
 
-  _print_unit(unit, line);
-}
-
-void display_parameter_int(const char* parameter, int value, const char* unit, int line)
-{
-  _print_parameter(parameter, line);
-
-  display.setFont(&FreeMonoBold9pt7b);
-  display.setTextColor(GxEPD_RED);
-  display.setCursor(140, line);
-  display.printf("%4d", value);
-
-  _print_unit(unit, line);
-}
-
-void show_current_weather(const void* pv)
-{
-  display.fillScreen(GxEPD_WHITE);
-  display.setTextColor(GxEPD_BLACK);
-  display.setCursor(0, 10);
-  display.setFont(&FreeMonoBold9pt7b);
-  display.print(current_location);
-  display.setCursor(0, 40);
-  display.setFont(&FreeMono9pt7b);
-  display.printf("%02d/%02d/%d  %02d:%02d", current_date.Day,
-                                            current_date.Month,
-                                            1970 + current_date.Year,
-                                            current_date.Hour,
-                                            current_date.Minute);
-
-  display_parameter_float("Temperature", current_temperature, "'C", 80);
-  display_parameter_float("Ressentie", current_feels_like, "'C", 100);
-  display_parameter_int("Pression", current_pressure, "hPa", 120);
-  display_parameter_int("Humidite", current_humidity, "%", 140);
-  display_parameter_float("Vent", current_wind, "km/h", 160);
-}
-
-void display_weather(DynamicJsonDocument *doc)
-{
-  Serial.println("read and convert");
-  current_location = (*doc)["name"].as<const char*>();
-  unsigned long timestamp = (*doc)["dt"].as<unsigned long>();
-  breakTime(timestamp + 3600, current_date);
-  current_temperature = (*doc)["main"]["temp"].as<float>() - T0;
-  current_pressure = (*doc)["main"]["pressure"].as<unsigned int>();
-  current_humidity = (*doc)["main"]["humidity"].as<unsigned int>();
-  current_wind = (*doc)["wind"]["speed"].as<float>() * MS_TO_KMH;
-  Serial.println("display");
   display.setRotation(1);
   display.setFullWindow();
-  display.drawPaged(show_current_weather, 0);
+
+  display.firstPage();
+  do
+  {
+    graph.draw();
+  }
+  while (display.nextPage());
+}
+
+void location_handler(Button2& btn) {
+    location_index++;
+    location_index = location_index % 3;
+    EEPROM.write(0, location_index);
+    EEPROM.commit();
+    location = locations[location_index];
+    draw_graph();
+}
+
+void mode_handler(Button2& btn) {
+    mode++;
+    mode = mode % 3;
+    EEPROM.write(1, mode);
+    EEPROM.commit();
+    draw_graph();
 }
 
 void setup() {
   Serial.begin(115200);
   while (!Serial) continue;
 
+  EEPROM.begin(2);
+
   delay(1000);
-  
   display.init(115200);
   
+  location_button.setClickHandler(location_handler);
+  location_index = EEPROM.read(0);
+  location = locations[location_index];
+
+  mode_button.setClickHandler(mode_handler);
+  mode = EEPROM.read(1);
+
   delay(4000);
 
   for (const WifiNetwork network : networks) wifiMulti.addAP(network.ssid, network.password);
@@ -179,74 +176,7 @@ void setup() {
     delay(10000);
   }
 
-  //String response = get_http_response("weather");
-  //DynamicJsonDocument doc(2000);
-  //parse_json(response, &doc);
-  //display_weather(&doc);
-
-  String response = get_http_response("forecast");
-  DynamicJsonDocument doc(30000);
-  parse_json(response, &doc);
-  //Graph graph = Graph(&display, "T", "'C", "P", "hPa");
-  Graph graph = Graph(&display, "T", "'C", "RR", "mm");
-
-  for (int i = 0; i < 25; i++) {
-    graph.push_a(doc["list"][i]["dt"].as<unsigned long>(), doc["list"][i]["main"]["temp"].as<float>() - T0);
-    //graph.push_b(doc["list"][i]["dt"].as<unsigned long>(), doc["list"][i]["main"]["pressure"].as<int>());
-    graph.push_b(doc["list"][i]["dt"].as<unsigned long>(), doc["list"][i]["rain"]["3h"].as<float>());
-  }
-  Serial.println("push done");
-
-  display.setRotation(1);
-  display.setFullWindow();
-  Serial.println("width height");
-  Serial.println(display.width());
-  Serial.println(display.height());
-  /*
-  float min_value, max_value;
-  int step = graph.find_min_max_value(min_value, max_value);
-  Serial.println("min max");
-  Serial.println(step);
-  Serial.println(min_value);
-  Serial.println(max_value);
-  Serial.println(graph.screen_y(min_value));
-  Serial.println(graph.screen_y(max_value));
-*/
-  // auto it = graph._map_a.begin();
-  // Serial.println("data");
-  // while (it != graph._map_a.end())
-  // {
-  //   TimeElements t;
-  //   breakTime(it->first, t);
-  //   Serial.println(t.Hour);
-  //   Serial.println(t.Hour % 6 == 0);
-  //   it++;
-  // }
-//   Serial.print("X");
-//   unsigned long t = graph._map_a.begin()->first;
-//   Serial.println(t);
-//   // Serial.println(graph._map_a.end()->first);
-//   // unsigned long timestamp_min = graph._map_a.begin()->first;
-//   // unsigned long a = graph._map_a.end()->first - timestamp_min;
-//   // unsigned long b = graph._map_a.end()->first - timestamp_min;
-//   // unsigned long c = a / b;
-// //  c * (display.width() - graph._left_margin) + graph._left_margin;
-//   // Serial.println(graph.screenX(t));
-//   // Serial.println(graph.screenX(graph._map_a.end()->first));
-
-//   Serial.print("Y");
-//   float min_value, max_value;
-//   graph.find_min_max_value(min_value, max_value);
-//   Serial.println(graph.screenY(min_value));
-//   Serial.println(graph.screenY(max_value));
-
-
-  display.firstPage();
-  do
-  {
-    graph.draw();
-  }
-  while (display.nextPage());
+  draw_graph();
 
   // Doze off (forever);
   //display.hibernate();
@@ -254,5 +184,6 @@ void setup() {
 }
 
 void loop() {
-
+  location_button.loop();
+  mode_button.loop();
 }
