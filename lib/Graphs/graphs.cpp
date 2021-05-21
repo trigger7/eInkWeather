@@ -52,6 +52,11 @@ void Graph::set_parameter_b(const char *parameter_b, const char *unit_b, graph_t
   this->_linked = this->_unit_a == this->_unit_b;
 }
 
+void Graph::set_timezone(Timezone& tz)
+{
+  this->_tz = &tz;
+}
+
 void Graph::draw(void)
 {
   this->_gfx->fillScreen(GxEPD_WHITE);
@@ -119,26 +124,36 @@ void Graph::draw_axes(void)
   //int x_spacing = this->get_x_spacing();
   {
     int tick_length = 1;
-    unsigned long timestamp = it->first;
-    int x = this->screen_x(timestamp);
+    unsigned long utc_timestamp = it->first;
+    unsigned long local_timestamp;
+    int x = this->screen_x(utc_timestamp);
 
-    tmElements_t date;
-    breakTime(timestamp, date);
+    tmElements_t utc_date, local_date;
+    breakTime(utc_timestamp, utc_date);
 
-    if (date.Hour % 6 == 0 && x < this->_gfx->width() - 15)
+    if (this->_tz != nullptr)
+    {
+      local_timestamp = this->_tz->toLocal(utc_timestamp);
+      breakTime(local_timestamp, local_date);
+    } else {
+      local_timestamp = utc_timestamp;
+      local_date = utc_date;
+    }
+
+    if (utc_date.Hour % 6 == 0 && x < this->_gfx->width() - 15)
     {
       tick_length = 2;
       this->_gfx->setCursor(x - 4, this->_gfx->height() - 8);
-      this->_gfx->printf("%02dH", date.Hour);
+      this->_gfx->printf("%02dH", local_date.Hour);
     }
-    if (date.Hour == 0 || it == this->_map_a.begin())
+    if (local_date.Hour < 3 || it == this->_map_a.begin())
     {
-      if (date.Hour == 0)
+      if (local_date.Hour < 3)
       {
         tick_length = 5;
       }
       this->_gfx->setCursor(x, this->_gfx->height() - 2);
-      this->_gfx->printf("%02d/%02d", date.Day, date.Month);
+      this->_gfx->printf("%02d/%02d", local_date.Day, local_date.Month);
     }
 
     this->_gfx->drawLine(x, this->_gfx->height() - this->_bottom_margin,

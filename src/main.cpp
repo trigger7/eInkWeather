@@ -48,7 +48,7 @@ String get_http_response(String type, String location)
   String payload;
 
   Serial.println("[HTTP] begin...");
-  String url = "http://api.openweathermap.org/data/2.5/" + type + "?q=" + location + "&appid=" API_KEY;
+  String url = "http://api.openweathermap.org/data/2.5/" + type + "?q=" + location + "&appid=" API_KEY "&lang=" API_LANG;
   http.begin(url); //HTTP
 
   Serial.println("[HTTP] GET...");
@@ -119,6 +119,7 @@ void draw_graph() {
   parse_json(response, doc);
 
   Graph graph = Graph(&display, location.title);
+  graph.set_timezone(tz);
 
   push_data(graph, doc, mode);
   Serial.println("push done");

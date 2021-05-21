@@ -1,5 +1,5 @@
 #include <etl/map.h>
-
+#include <Timezone.h>
 #include <Adafruit_GFX.h>
 
 #define MARGIN 14
@@ -19,6 +19,7 @@ class Graph {
 
     void set_parameter_a(const char *parameter_a, const char *unit_a, graph_type type_a = line);
     void set_parameter_b(const char *parameter_b, const char *unit_b, graph_type type_b = line);
+    void set_timezone(Timezone& tz);
 
   //protected:
     void draw_axes(void);
@@ -41,6 +42,7 @@ class Graph {
   //private:
     Adafruit_GFX *_gfx;
     const char *_title;
+    Timezone *_tz;
 
     etl::map<unsigned long, float, 25> _map_a;
     etl::map<unsigned long, float, 25> _map_b;
