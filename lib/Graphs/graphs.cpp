@@ -126,7 +126,7 @@ void Graph::draw_axes(void)
     int tick_length = 1;
     unsigned long utc_timestamp = it->first;
     unsigned long local_timestamp;
-    int x = this->screen_x(utc_timestamp);
+    int x = this->screen_x(utc_timestamp), date_x;
 
     tmElements_t utc_date, local_date;
     breakTime(utc_timestamp, utc_date);
@@ -152,7 +152,14 @@ void Graph::draw_axes(void)
       {
         tick_length = 5;
       }
-      this->_gfx->setCursor(x, this->_gfx->height() - 2);
+      if (it != this->_map_a.begin())
+      {
+        int16_t tbx, tby; uint16_t tbw, tbh;
+        this->_gfx->getTextBounds("DD/MM", 0, 0, &tbx, &tby, &tbw, &tbh);
+        date_x = max(x, this->_left_margin() + tbw);
+      } else
+        date_x = x;
+      this->_gfx->setCursor(date_x, this->_gfx->height() - 2);
       this->_gfx->printf("%02d/%02d", local_date.Day, local_date.Month);
     }
 
